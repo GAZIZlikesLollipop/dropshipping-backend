@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,7 +25,7 @@ func getProducts(c *gin.Context) {
 	var products []Product
 	for rows.Next() {
 		var p Product
-		if err := rows.Scan(&p.Id, &p.Name, &p.Price, &p.Iamge); err != nil {
+		if err := rows.Scan(&p.Id, &p.Name, &p.Price, &p.Image); err != nil {
 			log.Printf("Ошибка сканирования продукта: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Ошибка сканирования продукта: %v", err)})
 		}
@@ -49,7 +50,7 @@ func getProduct(c *gin.Context) {
 	}
 	row := db.QueryRow("SELECT id,name,price,image FROM products WHERE id = ?", id)
 	var product Product
-	err = row.Scan(&product.Id, &product.Name, &product.Price, &product.Iamge)
+	err = row.Scan(&product.Id, &product.Name, &product.Price, &product.Image)
 	if err == sql.ErrNoRows {
 		// Если продукт с таким ID не найден
 		c.JSON(http.StatusNotFound, gin.H{"error": "Продукт не найден"})
@@ -185,7 +186,7 @@ func addProduct(c *gin.Context) {
 	product := Product{
 		Name:  name,
 		Price: price,
-		Iamge: imageUrl,
+		Image: imageUrl,
 	}
 
 	stmt, err := db.Prepare("INSERT INTO products(name,price,image) VALUES(?,?,?)")
@@ -196,7 +197,7 @@ func addProduct(c *gin.Context) {
 	}
 	defer stmt.Close()
 
-	result, err := stmt.Exec(product.Name, product.Price, product.Iamge)
+	result, err := stmt.Exec(product.Name, product.Price, product.Image)
 	if err != nil {
 		log.Printf("Ошибка при добавлении продукта в базу данных: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при добавлении продукта в базу данных"})
@@ -213,5 +214,140 @@ func addProduct(c *gin.Context) {
 }
 
 func updateProduct(c *gin.Context) {
+	idStr := c.Param("id")
 
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		log.Println("Ошибка преоброзования пармтера")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Ошибка преоброзования пармтера"})
+		return
+	}
+
+	var currentProduct Product
+	row := db.QueryRow("SELECT id,name,price,image FROM products WHERE id = ?", id)
+	err = row.Scan(&currentProduct.Id, &currentProduct.Name, &currentProduct.Price, &currentProduct.Image)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Продукт не найден"})
+		return
+	} else if err != nil {
+		log.Printf("Ошибка при получении текущих данных продукта с ID %d: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сервера при получении данных продукта"})
+		return
+	}
+	newName := c.PostForm("name")
+	newPriceStr := c.PostForm("price")
+	newImageFile, fileError := c.FormFile("image")
+
+	var updateFields []string
+	var updateValues []interface{}
+
+	if newName != "" && newName != currentProduct.Name {
+		updateFields = append(updateFields, "name = ?")
+		updateValues = append(updateValues, newName)
+		currentProduct.Name = newName
+	}
+
+	if newPriceStr != "" {
+		newPrice, priceErr := strconv.Atoi(newPriceStr)
+		if priceErr != nil {
+			log.Println("Ошибка парсинга новой цены")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Ошибка парсинга новой цены"})
+			return
+		}
+		if newPrice <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Цена должна быть больше нуля"})
+			return
+		}
+		if newPrice != currentProduct.Price {
+			updateFields = append(updateFields, "price = ?")
+			updateValues = append(updateValues, newPrice)
+			currentProduct.Price = newPrice
+		}
+	}
+
+	// Обновление изображения продукта
+	// Проверяем, был ли файл "image" отправлен в запросе (`fileHeaderErr == nil` означает, что файл успешно получен).
+	if fileError == nil && newImageFile != nil {
+		// --- Логика удаления старого изображения ---
+		if currentProduct.Image != "" && currentProduct.Image != "/" {
+			filePathOnDisk := filepath.Join(".", currentProduct.Image)
+			// Важная проверка безопасности: убедитесь, что удаляете только из вашей папки загрузок.
+			// Это предотвратит попытки удалить файлы из системных директорий.
+			if strings.HasPrefix(filePathOnDisk, "uploads"+string(filepath.Separator)) {
+				if err := os.Remove(filePathOnDisk); err != nil {
+					log.Printf("Ошибка при удалении старого файла изображения %s: %v", filePathOnDisk, err)
+					// В реальном приложении можно было бы логировать или отправлять предупреждение.
+					// Здесь мы продолжаем, так как обновление записи в БД важнее, чем удаление старого файла.
+				} else {
+					log.Printf("Старый файл %s успешно удален с диска", filePathOnDisk)
+				}
+			} else {
+				log.Printf("Попытка удалить файл вне директории загрузок: %s (пропускаем удаление старого файла)", filePathOnDisk)
+			}
+		}
+
+		// --- Логика сохранения нового изображения ---
+		// Генерируем уникальное имя файла с помощью метки времени и оригинального имени
+		newFilename := fmt.Sprintf("%d-%s", time.Now().UnixNano(), filepath.Base(newImageFile.Filename))
+		uploadDir := filepath.Join(".", "uploads", "images")   // Директория, куда будем сохранять
+		newUploadPath := filepath.Join(uploadDir, newFilename) // Полный путь к новому файлу
+
+		// Убедимся, что директория для загрузок существует (она уже создается в setupDatabase, но дополнительная проверка не помешает)
+		if err := os.MkdirAll(uploadDir, 0755); err != nil {
+			log.Printf("Ошибка создания директории для загрузки '%s': %v", uploadDir, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сервера при сохранении нового изображения"})
+			return
+		}
+
+		// Сохраняем загруженный файл на диске
+		if err := c.SaveUploadedFile(newImageFile, newUploadPath); err != nil {
+			log.Printf("Ошибка сохранения нового файла '%s': %v", newUploadPath, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сохранения нового изображения"})
+			return
+		}
+
+		// Формируем URL изображения для сохранения в базе данных
+		// Этот URL будет использоваться клиентом для доступа к изображению через статический сервер
+		newImageUrl := "/" + filepath.Join("uploads", "images", newFilename)
+		updateFields = append(updateFields, "image_url = ?") // Добавляем поле для обновления в SQL
+		updateValues = append(updateValues, newImageUrl)     // Добавляем значение
+		currentProduct.Image = newImageUrl                   // Обновляем в объекте для возврата клиенту
+	}
+
+	if len(updateFields) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Нету данных для обнвления"})
+		return
+	}
+
+	updateQuery := fmt.Sprintf("UPDATE products SET %s WHERE id = ?", strings.Join(updateFields, ", "))
+	updateValues = append(updateValues, id)
+
+	stmt, err := db.Prepare(updateQuery)
+	if err != nil {
+		log.Println("Ошибка подготовки sql запроса")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка подготовки sql запроса"})
+		return
+	}
+	defer stmt.Close()
+
+	result, err := stmt.Exec(updateValues...)
+	if err != nil {
+		log.Printf("Ошибка при обновлении продукта в базе данных: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при обновлении продукта в базе данных"})
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		log.Printf("Ошибка получения количества затронутых строк при обновлении: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при обновлении продукта"})
+		return
+	}
+
+	if rowsAffected == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "Продукт не найден, и данные не измнеились"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("Данные продукта успешно обновленны\n%v", currentProduct)})
 }

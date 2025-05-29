@@ -5,14 +5,14 @@ import (
 	"log"
 
 	"github.com/gin-gonic/gin"
-	// _ "github.com/mattn/sqlite3"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type Product struct {
 	Id    int64  `json:"id"`
 	Name  string `json:"name" binding:"required"`
 	Price int    `json:"price" binding:"required"`
-	Iamge string `json:"image" binding:"required"`
+	Image string `json:"image" binding:"required"`
 }
 
 type User struct {
@@ -28,7 +28,8 @@ var db *sql.DB
 
 func main() {
 	r := gin.Default()
-	db, err := sql.Open("sqlite3", "shop.db")
+	var err error
+	db, err = sql.Open("sqlite3", "shop.db")
 	if err != nil {
 		log.Fatal("Ошибка создания базы данных")
 	}
@@ -44,7 +45,7 @@ func main() {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,
 			price INTEGER,
-			iamge TEXT NOT NULL
+			image TEXT NOT NULL
 		)
 	`
 	_, err = db.Exec(productTable)

@@ -67,10 +67,18 @@ func main() {
 	if err != nil {
 		log.Fatal("Ошибка создания таблицы пользователей")
 	}
+
 	r.GET("/products", getProducts)
 	r.GET("/product/:id", getProduct)
 	r.DELETE("/product/:id", deleteProduct)
 	r.POST("/product", addProduct)
 	r.PATCH("/product/:id", updateProduct)
+
+	r.GET("/users", getUsers)
+	r.GET("/user/:id", getUser)
+	r.DELETE("/user/:id", deleteUser)
+	r.POST("/user", addUser)
+	r.PATCH("/user/:id", updateUser)
+
 	r.Run(":8080")
 }

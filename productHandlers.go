@@ -48,19 +48,21 @@ func getProduct(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Ошибка преоброзования пармтера"})
 		return
 	}
+
 	row := db.QueryRow("SELECT id,name,price,image FROM products WHERE id = ?", id)
+
 	var product Product
+
 	err = row.Scan(&product.Id, &product.Name, &product.Price, &product.Image)
 	if err == sql.ErrNoRows {
-		// Если продукт с таким ID не найден
 		c.JSON(http.StatusNotFound, gin.H{"error": "Продукт не найден"})
 		return
 	} else if err != nil {
-		// Другая ошибка при сканировании или выполнении запроса
 		log.Printf("Ошибка при получении продукта по ID %d: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при получении продукта: " + err.Error()})
 		return
 	}
+
 	c.JSON(http.StatusOK, product)
 }
 

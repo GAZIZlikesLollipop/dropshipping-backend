@@ -236,6 +236,7 @@ func updateProduct(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сервера при получении данных продукта"})
 		return
 	}
+
 	newName := c.PostForm("name")
 	newPriceStr := c.PostForm("price")
 	newImageFile, fileError := c.FormFile("image")

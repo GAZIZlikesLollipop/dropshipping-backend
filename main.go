@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 
 	"github.com/gin-gonic/gin"
@@ -20,8 +21,16 @@ type User struct {
 	Name      string  `json:"name" binding:"required"`
 	Latitude  float64 `json:"latitude" binding:"required"`
 	Longitude float64 `json:"longitude" binding:"required"`
-	Is_card   bool    `json:"is_card"`
+	Is_card   bool    `json:"is_card" binding:"required"`
 	Cart      []int64 `json:"cart"`
+}
+
+func convertInt64ToStringSlice(intSlice []int64) []string {
+	var stringSlice []string
+	for _, i := range intSlice {
+		stringSlice = append(stringSlice, fmt.Sprintf("%d", i))
+	}
+	return stringSlice
 }
 
 var db *sql.DB
@@ -59,7 +68,7 @@ func main() {
 			name TEXT NOT NULL,
 			latitude REAL,
 			longitude REAL,
-			is_card INTEGER DEFAULT 0,
+			is_card INTEGER,
 			cart TEXT 
 		)
 	`

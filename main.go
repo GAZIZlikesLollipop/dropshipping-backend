@@ -4,7 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-
+    "strings"
+    "strconv"
 	"github.com/gin-gonic/gin"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -21,7 +22,7 @@ type User struct {
 	Name      string  `json:"name" binding:"required"`
 	Latitude  float64 `json:"latitude" binding:"required"`
 	Longitude float64 `json:"longitude" binding:"required"`
-	Is_card   bool    `json:"is_card" binding:"required"`
+	Is_card   bool    `json:"is_card"`
 	Cart      []int64 `json:"cart"`
 }
 
@@ -33,6 +34,23 @@ func convertInt64ToStringSlice(intSlice []int64) []string {
 	return stringSlice
 }
 
+func parseCart(cart string) []int64 {
+	var result []int64
+	if cart == "" {
+		return result
+	}
+	parts := strings.Split(cart, ",")
+	for _, part := range parts {
+		num, err := strconv.ParseInt(part, 10, 64)
+		if err != nil {
+			log.Println("Некорректные данные в cart:", part)
+			continue
+		}
+		result = append(result, num)
+	}
+	return result
+}
+
 var db *sql.DB
 
 func main() {
@@ -40,17 +58,17 @@ func main() {
 	var err error
 	db, err = sql.Open("sqlite3", "shop.db")
 	if err != nil {
-		log.Fatal("Ошибка создания базы данных")
+		log.Fatalf("Ошибка создания базы данных\n%v",err)
 	}
 	defer db.Close()
 
 	err = db.Ping()
 	if err != nil {
-		log.Fatal("Ошибка подключения базы данных")
+		log.Fatalf("Ошибка подключения базы данных\n%v",err)
 	}
 
 	productTable := `
-		CREATE TABLE products (
+		CREATE TABLE IF NOT EXISTS products (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,
 			price INTEGER,
@@ -59,11 +77,11 @@ func main() {
 	`
 	_, err = db.Exec(productTable)
 	if err != nil {
-		log.Fatal("Ошибка создания таблицы продуктов")
+		log.Fatalf("Ошибка создания таблицы продуктов\n%v",err)
 	}
 
 	userTable := `
-		CREATE TABLE users (
+		CREATE TABLE IF NOT EXISTS users (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,
 			latitude REAL,
@@ -74,7 +92,7 @@ func main() {
 	`
 	_, err = db.Exec(userTable)
 	if err != nil {
-		log.Fatal("Ошибка создания таблицы пользователей")
+		log.Fatalf("Ошибка создания таблицы пользователей\n%v",err)
 	}
 
 	r.GET("/products", getProducts)

@@ -80,7 +80,6 @@ func deleteProduct(c *gin.Context) {
 	rows := db.QueryRow("SELECT image FROM products WHERE id = ?", id)
 	err = rows.Scan(&imageUrl)
 	if err == sql.ErrNoRows {
-		// Если продукта не существует, то и удалять нечего
 		c.JSON(http.StatusNotFound, gin.H{"error": "Продукт не найден"})
 		return
 	} else if err != nil {
@@ -116,26 +115,18 @@ func deleteProduct(c *gin.Context) {
 	}
 
 	if imageUrl != "" && imageUrl != "/" {
-		// Убедитесь, что "uploads" соответствует вашей базовой директории для статики
-		// И imageUrl начинается с "/uploads/"
-		filePathOnDisk := filepath.Join(".", imageUrl) // Используем "." чтобы получить относительный путь от корня приложения
-
-		// Защита от удаления критически важных файлов
+		filePathOnDisk := filepath.Join(".", imageUrl)
 		if !filepath.HasPrefix(filePathOnDisk, "uploads"+string(filepath.Separator)) {
 			log.Printf("Попытка удалить файл вне директории загрузок: %s", filePathOnDisk)
-			// Не прерываем удаление из БД, но логируем проблему с файлом
 		} else {
 			err := os.Remove(filePathOnDisk)
 			if err != nil {
 				log.Printf("Ошибка при удалении файла %s: %v", filePathOnDisk, err)
-				// В реальном приложении можно было бы отправить 200 OK, но с предупреждением о файле.
-				// Сейчас просто логируем и продолжаем.
 			} else {
 				log.Printf("Файл %s успешно удален с диска", filePathOnDisk)
 			}
 		}
 	}
-
 	c.JSON(http.StatusOK, gin.H{"message": "Подукт успешно удален!"})
 }
 
@@ -152,7 +143,7 @@ func addProduct(c *gin.Context) {
 
 	price, err := strconv.Atoi(priceStr)
 	if err != nil {
-		log.Printf("Ошибка парсинга цены '%s': %v", priceStr, err) // Логируем, что пришло
+		log.Printf("Ошибка парсинга цены '%s': %v", priceStr, err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверное значение цены"})
 		return
 	}
@@ -168,10 +159,9 @@ func addProduct(c *gin.Context) {
 
 	filename := fmt.Sprintf("%d-%s", time.Now().UnixNano(), filepath.Base(imageFile.Filename))
 
-	uploadDir := filepath.Join(".", "uploads", "images") // Путь к директории загрузок от корня приложения
-	uploadPath := filepath.Join(uploadDir, filename)     // Полный путь к файлу на диске
-
-	if err := os.MkdirAll(uploadDir, 0755); err != nil { // 0755 - права доступа
+	uploadDir := filepath.Join(".", "uploads", "images")
+	uploadPath := filepath.Join(uploadDir, filename)
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
 		log.Printf("Ошибка создания директории для загрузки '%s': %v", uploadDir, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сервера при сохранении изображения"})
 		return
@@ -268,20 +258,13 @@ func updateProduct(c *gin.Context) {
 		}
 	}
 
-	// Обновление изображения продукта
-	// Проверяем, был ли файл "image" отправлен в запросе (`fileHeaderErr == nil` означает, что файл успешно получен).
-	if fileError == nil && newImageFile != nil {
-		// --- Логика удаления старого изображения ---
+    if fileError == nil && newImageFile != nil {
 		if currentProduct.Image != "" && currentProduct.Image != "/" {
 			filePathOnDisk := filepath.Join(".", currentProduct.Image)
-			// Важная проверка безопасности: убедитесь, что удаляете только из вашей папки загрузок.
-			// Это предотвратит попытки удалить файлы из системных директорий.
-			if strings.HasPrefix(filePathOnDisk, "uploads"+string(filepath.Separator)) {
+		if strings.HasPrefix(filePathOnDisk, "uploads"+string(filepath.Separator)) {
 				if err := os.Remove(filePathOnDisk); err != nil {
 					log.Printf("Ошибка при удалении старого файла изображения %s: %v", filePathOnDisk, err)
-					// В реальном приложении можно было бы логировать или отправлять предупреждение.
-					// Здесь мы продолжаем, так как обновление записи в БД важнее, чем удаление старого файла.
-				} else {
+			} else {
 					log.Printf("Старый файл %s успешно удален с диска", filePathOnDisk)
 				}
 			} else {
@@ -289,32 +272,26 @@ func updateProduct(c *gin.Context) {
 			}
 		}
 
-		// --- Логика сохранения нового изображения ---
-		// Генерируем уникальное имя файла с помощью метки времени и оригинального имени
 		newFilename := fmt.Sprintf("%d-%s", time.Now().UnixNano(), filepath.Base(newImageFile.Filename))
-		uploadDir := filepath.Join(".", "uploads", "images")   // Директория, куда будем сохранять
-		newUploadPath := filepath.Join(uploadDir, newFilename) // Полный путь к новому файлу
-
-		// Убедимся, что директория для загрузок существует (она уже создается в setupDatabase, но дополнительная проверка не помешает)
+		uploadDir := filepath.Join(".", "uploads", "images")  
+		newUploadPath := filepath.Join(uploadDir, newFilename) 
+		
 		if err := os.MkdirAll(uploadDir, 0755); err != nil {
 			log.Printf("Ошибка создания директории для загрузки '%s': %v", uploadDir, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сервера при сохранении нового изображения"})
 			return
 		}
 
-		// Сохраняем загруженный файл на диске
 		if err := c.SaveUploadedFile(newImageFile, newUploadPath); err != nil {
 			log.Printf("Ошибка сохранения нового файла '%s': %v", newUploadPath, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сохранения нового изображения"})
 			return
 		}
 
-		// Формируем URL изображения для сохранения в базе данных
-		// Этот URL будет использоваться клиентом для доступа к изображению через статический сервер
 		newImageUrl := "/" + filepath.Join("uploads", "images", newFilename)
-		updateFields = append(updateFields, "image_url = ?") // Добавляем поле для обновления в SQL
-		updateValues = append(updateValues, newImageUrl)     // Добавляем значение
-		currentProduct.Image = newImageUrl                   // Обновляем в объекте для возврата клиенту
+		updateFields = append(updateFields, "image_url = ?") 
+		updateValues = append(updateValues, newImageUrl)     
+		currentProduct.Image = newImageUrl
 	}
 
 	if len(updateFields) == 0 {

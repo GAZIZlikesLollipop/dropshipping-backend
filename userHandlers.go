@@ -20,19 +20,24 @@ func getUsers(c *gin.Context) {
 	}
 	defer rows.Close()
 	var users []User
+	 
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.Id, &u.Name, &u.Latitude, &u.Longitude, &u.Is_card, &u.Cart); err != nil {
+		var cart string
+		if err := rows.Scan(&u.Id, &u.Name, &u.Latitude, &u.Longitude, &u.Is_card, &cart); err != nil {
 			log.Printf("Ошибка сканирования пользователья: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Ошибка сканирования пользователья: %v", err)})
 		}
+		u.Cart = parseCart(cart)
 		users = append(users, u)
 	}
+	
 	if err := rows.Err(); err != nil {
 		log.Printf("Ошибка итерации по пользовательям: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка итерации по пользовательям: " + err.Error()})
 		return
 	}
+	
 	c.JSON(http.StatusOK, users)
 }
 
@@ -48,8 +53,9 @@ func getUser(c *gin.Context) {
 	row := db.QueryRow("SELECT id,name,latitude,longitude,is_card,cart FROM users WHERE id = ?", id)
 
 	var user User
-	err = row.Scan(&user.Id, &user.Name, &user.Latitude, &user.Longitude, &user.Is_card, &user.Cart)
-
+	var cart string
+	err = row.Scan(&user.Id, &user.Name, &user.Latitude, &user.Longitude, &user.Is_card, &cart)
+    
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "пользователь не найден"})
 		return
@@ -58,7 +64,9 @@ func getUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при получении пользовательа: " + err.Error()})
 		return
 	}
-
+	
+    user.Cart = parseCart(cart)
+	
 	c.JSON(http.StatusOK, user)
 }
 
@@ -69,16 +77,30 @@ func addUser(c *gin.Context) {
 		return
 	}
 
-	_, err := db.Exec(
-		"INSERT INTO users (name,latitude,longitude,is_card,cart) VALUES (?,?,?,?,?)",
-		user.Name, user.Latitude, user.Longitude, user.Is_card, "",
-	)
+	stmt, err := db.Prepare("INSERT INTO users (name,latitude,longitude,is_card,cart) VALUES (?,?,?,?,?)")
+	
 	if err != nil {
-		log.Println("Ошибка добавления пользователя в базу данных")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка добалвения пользователя в базу данных"})
+		log.Println("Ошибка подготовки запроса пользователя в базу данных")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка подготовки запроса пользователя в базу данных"})
 		return
 	}
-
+	
+	result, err := stmt.Exec(user.Name, user.Latitude, user.Longitude, user.Is_card, strings.Join(convertInt64ToStringSlice(user.Cart),","))
+	
+	if err != nil {
+	    log.Printf("Ошибка при добавлении пользователя в базу данных: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при добавлении пользователя в базу данных"})
+	    return 
+	}
+	
+	id, err := result.LastInsertId()
+	if err != nil {
+	    log.Printf("Ошибка получения ID нового пользователя: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения ID нового пользователя"})
+	    return
+	}
+	
+    user.Id = id
 	c.JSON(http.StatusCreated, gin.H{"message": "Пользователь успешно добавлен", "user": user})
 }
 
@@ -93,7 +115,7 @@ func deleteUser(c *gin.Context) {
 		return
 	}
 
-	stmt, err := db.Prepare("DELETE FROM products WHERE id = ?")
+	stmt, err := db.Prepare("DELETE FROM users WHERE id = ?")
 	if err != nil {
 		log.Printf("Ошибка подготовки SQL-запроса на удаление: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка подготовки SQL-запроса"})
@@ -140,8 +162,9 @@ func updateUser(c *gin.Context) {
 	}
 
 	var currentUser User
-	row := db.QueryRow("SELECT id,name,price,latitude,longitude,is_card,cart FROM users WHERE id = ?", id)
-	err = row.Scan(&currentUser.Id, &currentUser.Name, &currentUser.Latitude, &currentUser.Longitude, &currentUser.Is_card, &currentUser.Cart)
+	var currentCart string
+	row := db.QueryRow("SELECT id,name,latitude,longitude,is_card,cart FROM users WHERE id = ?", id)
+	err = row.Scan(&currentUser.Id, &currentUser.Name, &currentUser.Latitude, &currentUser.Longitude, &currentUser.Is_card, &currentCart)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Пользователь не найден"})
 		return
@@ -150,6 +173,7 @@ func updateUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сервера при получении данных пользователя"})
 		return
 	}
+	currentUser.Cart = parseCart(currentCart)
 
 	var (
 		updateFields []string
@@ -176,7 +200,6 @@ func updateUser(c *gin.Context) {
 		updateFields = append(updateFields, "cart = ?")
 		updateValues = append(updateValues, strings.Join(convertInt64ToStringSlice(user.Cart), ", "))
 	}
-
 	if len(updateFields) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Нету данных для обнвления"})
 		return
@@ -211,6 +234,6 @@ func updateUser(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "пользователь не найден, и данные не измнеились"})
 		return
 	}
-
+    user.Id = int64(id)
 	c.JSON(http.StatusOK, gin.H{"message": "Пользователь успешно обновлен", "user": user})
 }
